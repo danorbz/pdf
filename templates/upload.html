@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Form Filler – Upload</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .upload-card {
+            background: white;
+            border-radius: 16px;
+            padding: 48px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 480px;
+            width: 90%;
+        }
+        h1 { color: #1a1a2e; margin-bottom: 8px; font-size: 28px; }
+        p.subtitle { color: #666; margin-bottom: 32px; }
+        .drop-zone {
+            border: 3px dashed #ccc;
+            border-radius: 12px;
+            padding: 48px 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 24px;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #4a6cf7;
+            background: #f0f4ff;
+        }
+        .drop-zone .icon { font-size: 48px; margin-bottom: 12px; }
+        .drop-zone p { color: #888; }
+        input[type="file"] { display: none; }
+        .btn {
+            display: inline-block;
+            padding: 12px 32px;
+            background: #4a6cf7;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .btn:hover { background: #3451c7; }
+    </style>
+</head>
+<body>
+    <div class="upload-card">
+        <h1>📄 PDF Form Filler</h1>
+        <p class="subtitle">Load a PDF to add text and signatures</p>
+
+        <form method="POST" action="/upload" enctype="multipart/form-data" id="uploadForm">
+            <div class="drop-zone" id="dropZone">
+                <div class="icon">📂</div>
+                <p>Drag & drop a PDF here, or click to browse</p>
+            </div>
+            <input type="file" name="pdf" accept=".pdf" id="fileInput">
+            <button type="submit" class="btn" id="submitBtn" style="display:none;">Open PDF</button>
+        </form>
+
+        <p id="fileName" style="color:#333; margin-top:12px; font-weight:500;"></p>
+    </div>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const submitBtn = document.getElementById('submitBtn');
+        const fileName = document.getElementById('fileName');
+        const form = document.getElementById('uploadForm');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        dropZone.addEventListener('dragover', e => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+        dropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                onFileSelected();
+            }
+        });
+
+        fileInput.addEventListener('change', onFileSelected);
+
+        function onFileSelected() {
+            if (fileInput.files.length) {
+                fileName.textContent = fileInput.files[0].name;
+                submitBtn.style.display = 'inline-block';
+            }
+        }
+    </script>
+</body>
+</html>

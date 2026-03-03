@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PDF Form Filler – Editor</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #e8eaed;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            user-select: none;
+        }
+
+        /* -- Toolbar -- */
+        .toolbar {
+            background: #1a1a2e;
+            color: white;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            z-index: 10;
+        }
+        .toolbar .sep { width: 1px; height: 28px; background: rgba(255,255,255,0.2); margin: 0 6px; }
+        .toolbar button, .toolbar select {
+            padding: 8px 14px; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 14px; transition: all 0.15s;
+        }
+        .toolbar button { background: #2d2d5e; color: white; }
+        .toolbar button:hover { background: #4a6cf7; }
+        .toolbar button.active { background: #4a6cf7; box-shadow: 0 0 0 2px #8dacff; }
+        .toolbar .btn-danger { background: #c0392b; }
+        .toolbar .btn-danger:hover { background: #e74c3c; }
+        .toolbar .btn-success { background: #27ae60; }
+        .toolbar .btn-success:hover { background: #2ecc71; }
+        .toolbar .page-info { color: #aaa; font-size: 14px; margin: 0 8px; }
+
+        /* -- Canvas area -- */
+        .canvas-container {
+            flex: 1; overflow: auto; display: flex;
+            justify-content: center; padding: 24px; background: #ccc;
+        }
+        .page-wrapper {
+            position: relative;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+            background: white;
+            display: inline-block;
+        }
+        .page-wrapper img {
+            display: block; max-width: 100%; height: auto;
+        }
+        /* Invisible overlay for click-to-add */
+        #clickOverlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 5; cursor: crosshair;
+        }
+
+        /* -- Draggable annotation items -- */
+        .annotation {
+            position: absolute;
+            z-index: 10;
+            cursor: grab;
+            border: 2px dashed transparent;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .annotation:hover {
+            border-color: #4a6cf7;
+            box-shadow: 0 0 8px rgba(74,108,247,0.4);
+        }
+        .annotation.dragging {
+            opacity: 0.85;
+            cursor: grabbing;
+            border-color: #e74c3c;
+            box-shadow: 0 2px 12px rgba(231,76,60,0.5);
+        }
+        .annotation .delete-btn {
+            display: none;
+            position: absolute;
+            top: -10px; right: -10px;
+            width: 22px; height: 22px;
+            background: #e74c3c; color: white;
+            border: none; border-radius: 50%;
+            font-size: 13px; line-height: 22px;
+            text-align: center; cursor: pointer;
+            z-index: 20;
+        }
+        .annotation:hover .delete-btn { display: block; }
+
+        .ann-text {
+            padding: 2px 4px;
+            white-space: nowrap;
+            color: #000;
+            pointer-events: auto;
+        }
+        .ann-sig img {
+            display: block;
+            pointer-events: none;
+        }
+
+        /* -- Signature modal -- */
+        .modal-overlay {
+            display: none; position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 100; justify-content: center; align-items: center;
+        }
+        .modal-overlay.show { display: flex; }
+        .modal {
+            background: white; border-radius: 12px; padding: 24px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center;
+        }
+        .modal h3 { margin-bottom: 16px; color: #1a1a2e; }
+        .sig-canvas {
+            border: 2px solid #ccc; border-radius: 8px; cursor: crosshair;
+            display: block; margin: 0 auto 16px; background: white;
+        }
+        .modal .btn-row { display: flex; gap: 8px; justify-content: center; }
+        .modal button {
+            padding: 10px 24px; border: none; border-radius: 6px;
+            cursor: pointer; font-size: 14px;
+        }
+        .modal .btn-primary { background: #4a6cf7; color: white; }
+        .modal .btn-secondary { background: #ddd; color: #333; }
+
+        /* -- Text input popover -- */
+        .text-popover {
+            display: none; position: fixed; z-index: 100;
+            background: white; border-radius: 10px; padding: 16px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+        }
+        .text-popover.show { display: block; }
+        .text-popover input[type="text"] {
+            width: 240px; padding: 8px; border: 1px solid #ccc;
+            border-radius: 6px; margin-bottom: 8px; display: block; font-size: 14px;
+        }
+        .text-popover input[type="number"] {
+            width: 80px; padding: 8px; border: 1px solid #ccc;
+            border-radius: 6px; margin-bottom: 12px; display: inline-block; font-size: 14px;
+        }
+        .text-popover label { font-size: 13px; color: #555; }
+        .text-popover .btn-row { display: flex; gap: 8px; }
+        .text-popover button {
+            padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px;
+        }
+        .text-popover .btn-primary { background: #4a6cf7; color: white; }
+        .text-popover .btn-secondary { background: #ddd; color: #333; }
+
+        /* -- Hint bar -- */
+        .hint-bar {
+            background: #fffbe6; color: #856404; text-align: center;
+            padding: 6px; font-size: 13px; border-bottom: 1px solid #ffc107;
+        }
+    </style>
+</head>
+<body>
+
+<!-- ===== TOOLBAR ===== -->
+<div class="toolbar">
+    <button onclick="location.href='/save'" class="btn-success">💾 Save PDF</button>
+    <div class="sep"></div>
+    <button id="btnAddText" onclick="setMode('text')">✏️ Add Text</button>
+    <button id="btnDrawSig" onclick="openSignaturePad()">🖊️ Draw Signature</button>
+    <button id="btnPlaceSig" onclick="setMode('signature')" disabled>📌 Place Signature</button>
+    <div class="sep"></div>
+    <button onclick="doUndo()">↩️ Undo</button>
+    <div class="sep"></div>
+    <button onclick="goPage(-1)">◀ Prev</button>
+    <span class="page-info" id="pageInfo">Page {{ current_page + 1 }} / {{ page_count }}</span>
+    <button onclick="goPage(1)">Next ▶</button>
+    <div class="sep"></div>
+    <form action="/clear" method="POST" style="display:inline;">
+        <button type="submit" class="btn-danger">✕ Close PDF</button>
+    </form>
+</div>
+
+<!-- ===== HINT BAR ===== -->
+<div class="hint-bar" id="hintBar">
+    💡 Click on the PDF to add items. <b>Drag</b> any text or signature to reposition it. Hover to see the ✕ delete button.
+</div>
+
+<!-- ===== PDF PAGE ===== -->
+<div class="canvas-container">
+    <div class="page-wrapper" id="pageWrapper">
+        <img id="pageImg"
+             src="/page/{{ current_page }}/image"
+             alt="PDF Page"
+             draggable="false">
+        <!-- Annotations will be rendered as absolutely-positioned divs here -->
+        <div id="annotationLayer"></div>
+        <!-- Invisible overlay for click-to-add (sits above page img, below annotations) -->
+        <div id="clickOverlay"></div>
+    </div>
+</div>
+
+<!-- ===== TEXT INPUT POPOVER ===== -->
+<div class="text-popover" id="textPopover">
+    <input type="text" id="textInput" placeholder="Enter text…">
+    <label>Size: </label>
+    <input type="number" id="textSize" value="12" min="6" max="72">
+    <div class="btn-row">
+        <button class="btn-primary" onclick="confirmText()">Add</button>
+        <button class="btn-secondary" onclick="cancelText()">Cancel</button>
+    </div>
+</div>
+
+<!-- ===== SIGNATURE PAD MODAL ===== -->
+<div class="modal-overlay" id="sigModal">
+    <div class="modal">
+        <h3>✍️ Draw Your Signature</h3>
+        <canvas class="sig-canvas" id="sigCanvas" width="500" height="200"></canvas>
+        <div class="btn-row">
+            <button class="btn-secondary" onclick="clearSigPad()">Clear</button>
+            <button class="btn-primary" onclick="confirmSignature()">OK</button>
+            <button class="btn-secondary" onclick="closeSigPad()">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ===== STATE =====
+const currentPage = {{ current_page }};
+const pageCount   = {{ page_count }};
+const PAGE_W_PT   = {{ page_width }};
+const PAGE_H_PT   = {{ page_height }};
+const ZOOM        = 2.0;
+
+let mode = 'none';          // 'none' | 'text' | 'signature'
+let signatureData = null;    // base64 PNG from pad
+let pendingClick = null;     // {x, y} in PDF points
+
+const pageImg          = document.getElementById('pageImg');
+const pageWrapper      = document.getElementById('pageWrapper');
+const annotationLayer  = document.getElementById('annotationLayer');
+const clickOverlay     = document.getElementById('clickOverlay');
+
+// ===== COORDINATE HELPERS =====
+function imgScale() {
+    // ratio from displayed image pixels → natural image pixels
+    return pageImg.naturalWidth / pageImg.clientWidth;
+}
+function pxToPdfPt(imgPx) {
+    // image pixel (at natural res) → PDF points
+    return imgPx / ZOOM;
+}
+function pdfPtToDisplayPx(pt) {
+    // PDF points → displayed CSS pixels on screen
+    return (pt * ZOOM) / imgScale();
+}
+
+// ===== MODE SWITCHING =====
+function setMode(m) {
+    mode = (mode === m) ? 'none' : m;
+    document.getElementById('btnAddText').classList.toggle('active', mode === 'text');
+    document.getElementById('btnPlaceSig').classList.toggle('active', mode === 'signature');
+    clickOverlay.style.pointerEvents = (mode !== 'none') ? 'auto' : 'none';
+    clickOverlay.style.cursor = (mode !== 'none') ? 'crosshair' : 'default';
+    updateHint();
+}
+
+function updateHint() {
+    const bar = document.getElementById('hintBar');
+    if (mode === 'text') {
+        bar.innerHTML = '✏️ <b>Add Text mode</b> – Click on the PDF where you want the text.';
+    } else if (mode === 'signature') {
+        bar.innerHTML = '📌 <b>Place Signature mode</b> – Click on the PDF to drop your signature.';
+    } else {
+        bar.innerHTML = '💡 Click on the PDF to add items. <b>Drag</b> any text or signature to reposition. Hover to see the ✕ delete button.';
+    }
+}
+
+// ===== CLICK TO ADD =====
+clickOverlay.addEventListener('click', (e) => {
+    const rect = pageImg.getBoundingClientRect();
+    const scale = imgScale();
+    const imgX = (e.clientX - rect.left) * scale;
+    const imgY = (e.clientY - rect.top) * scale;
+    const pdfX = pxToPdfPt(imgX);
+    const pdfY = pxToPdfPt(imgY);
+
+    if (mode === 'text') {
+        pendingClick = { x: pdfX, y: pdfY };
+        showTextPopover(e.clientX, e.clientY);
+    } else if (mode === 'signature' && signatureData) {
+        addSignatureAt(pdfX, pdfY);
+    }
+});
+
+// ===== LOAD & RENDER ANNOTATIONS =====
+function loadAnnotations() {
+    fetch(`/page/${currentPage}/annotations`)
+        .then(r => r.json())
+        .then(data => renderAnnotations(data));
+}
+
+function renderAnnotations(data) {
+    annotationLayer.innerHTML = '';
+
+    data.texts.forEach(t => {
+        const el = document.createElement('div');
+        el.className = 'annotation ann-text';
+        el.dataset.id = t.id;
+        el.dataset.type = 'text';
+        el.style.left = pdfPtToDisplayPx(t.x) + 'px';
+        el.style.top  = pdfPtToDisplayPx(t.y - t.font_size) + 'px';
+        el.style.fontSize = pdfPtToDisplayPx(t.font_size) + 'px';
+        el.style.fontFamily = 'Helvetica, Arial, sans-serif';
+        el.textContent = t.text;
+
+        const del = document.createElement('button');
+        del.className = 'delete-btn';
+        del.textContent = '✕';
+        del.onclick = (ev) => { ev.stopPropagation(); removeAnnotation(t.id); };
+        el.appendChild(del);
+
+        makeDraggable(el, t.id, t.font_size);
+        annotationLayer.appendChild(el);
+    });
+
+    data.signatures.forEach(s => {
+        const el = document.createElement('div');
+        el.className = 'annotation ann-sig';
+        el.dataset.id = s.id;
+        el.dataset.type = 'signature';
+        el.style.left   = pdfPtToDisplayPx(s.x) + 'px';
+        el.style.top    = pdfPtToDisplayPx(s.y) + 'px';
+        el.style.width  = pdfPtToDisplayPx(s.width) + 'px';
+        el.style.height = pdfPtToDisplayPx(s.height) + 'px';
+
+        const img = document.createElement('img');
+        img.src = `/signature_image/${s.id}`;
+        img.style.width = '100%';
+        img.style.height = '100%';
+        el.appendChild(img);
+
+        const del = document.createElement('button');
+        del.className = 'delete-btn';
+        del.textContent = '✕';
+        del.onclick = (ev) => { ev.stopPropagation(); removeAnnotation(s.id); };
+        el.appendChild(del);
+
+        makeDraggable(el, s.id, 0);
+        annotationLayer.appendChild(el);
+    });
+}
+
+// ===== DRAG & DROP =====
+function makeDraggable(el, annId, fontSizeOffset) {
+    let startX, startY, origLeft, origTop;
+    let dragging = false;
+
+    function onPointerDown(e) {
+        if (e.target.classList.contains('delete-btn')) return;
+        e.preventDefault();
+        dragging = true;
+        el.classList.add('dragging');
+        startX = e.clientX;
+        startY = e.clientY;
+        origLeft = parseFloat(el.style.left);
+        origTop  = parseFloat(el.style.top);
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+    }
+
+    function onPointerMove(e) {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        el.style.left = (origLeft + dx) + 'px';
+        el.style.top  = (origTop + dy) + 'px';
+    }
+
+    function onPointerUp(e) {
+        if (!dragging) return;
+        dragging = false;
+        el.classList.remove('dragging');
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+
+        // Convert final CSS position back to PDF points
+        const finalLeft = parseFloat(el.style.left);
+        const finalTop  = parseFloat(el.style.top);
+        const scale = imgScale();
+        let pdfX = (finalLeft * scale) / ZOOM;
+        let pdfY = (finalTop * scale) / ZOOM;
+
+        // For text, we stored top = y - fontSize, so reverse that
+        if (el.dataset.type === 'text') {
+            pdfY += fontSizeOffset;
+        }
+
+        fetch('/move', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ page: currentPage, id: annId, x: pdfX, y: pdfY })
+        });
+    }
+
+    el.addEventListener('pointerdown', onPointerDown);
+}
+
+// ===== REMOVE ANNOTATION =====
+function removeAnnotation(annId) {
+    fetch('/remove', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ page: currentPage, id: annId })
+    }).then(() => loadAnnotations());
+}
+
+// ===== ADD TEXT =====
+function showTextPopover(cx, cy) {
+    const pop = document.getElementById('textPopover');
+    pop.style.left = cx + 'px';
+    pop.style.top  = cy + 'px';
+    pop.classList.add('show');
+    const inp = document.getElementById('textInput');
+    inp.value = '';
+    inp.focus();
+}
+function cancelText() {
+    document.getElementById('textPopover').classList.remove('show');
+    pendingClick = null;
+}
+function confirmText() {
+    const text = document.getElementById('textInput').value.trim();
+    const size = parseInt(document.getElementById('textSize').value) || 12;
+    if (!text || !pendingClick) { cancelText(); return; }
+    fetch('/add_text', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            page: currentPage, x: pendingClick.x, y: pendingClick.y,
+            text: text, font_size: size,
+        })
+    }).then(() => { loadAnnotations(); cancelText(); setMode('none'); });
+}
+document.getElementById('textInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirmText();
+    if (e.key === 'Escape') cancelText();
+});
+
+// ===== ADD SIGNATURE =====
+function addSignatureAt(pdfX, pdfY) {
+    const w = 150, h = 60;
+    fetch('/add_signature', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            page: currentPage, x: pdfX, y: pdfY,
+            width: w, height: h, image: signatureData,
+        })
+    }).then(() => { loadAnnotations(); setMode('none'); });
+}
+
+// ===== SIGNATURE PAD =====
+const sigCanvas = document.getElementById('sigCanvas');
+const sigCtx    = sigCanvas.getContext('2d');
+let sigDrawing = false, sigLastPt = null;
+
+sigCanvas.addEventListener('mousedown', (e) => {
+    sigDrawing = true;
+    sigLastPt = { x: e.offsetX, y: e.offsetY };
+});
+sigCanvas.addEventListener('mousemove', (e) => {
+    if (!sigDrawing) return;
+    sigCtx.beginPath();
+    sigCtx.moveTo(sigLastPt.x, sigLastPt.y);
+    sigCtx.lineTo(e.offsetX, e.offsetY);
+    sigCtx.strokeStyle = '#000';
+    sigCtx.lineWidth = 3;
+    sigCtx.lineCap = 'round';
+    sigCtx.stroke();
+    sigLastPt = { x: e.offsetX, y: e.offsetY };
+});
+sigCanvas.addEventListener('mouseup',    () => { sigDrawing = false; sigLastPt = null; });
+sigCanvas.addEventListener('mouseleave', () => { sigDrawing = false; sigLastPt = null; });
+
+// Touch support
+sigCanvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const t = e.touches[0], r = sigCanvas.getBoundingClientRect();
+    sigDrawing = true;
+    sigLastPt = { x: t.clientX - r.left, y: t.clientY - r.top };
+});
+sigCanvas.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    if (!sigDrawing) return;
+    const t = e.touches[0], r = sigCanvas.getBoundingClientRect();
+    const pt = { x: t.clientX - r.left, y: t.clientY - r.top };
+    sigCtx.beginPath();
+    sigCtx.moveTo(sigLastPt.x, sigLastPt.y);
+    sigCtx.lineTo(pt.x, pt.y);
+    sigCtx.strokeStyle = '#000'; sigCtx.lineWidth = 3; sigCtx.lineCap = 'round';
+    sigCtx.stroke();
+    sigLastPt = pt;
+});
+sigCanvas.addEventListener('touchend', () => { sigDrawing = false; sigLastPt = null; });
+
+function openSignaturePad() { clearSigPad(); document.getElementById('sigModal').classList.add('show'); }
+function closeSigPad()      { document.getElementById('sigModal').classList.remove('show'); }
+function clearSigPad()      { sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height); }
+function confirmSignature() {
+    signatureData = sigCanvas.toDataURL('image/png');
+    closeSigPad();
+    document.getElementById('btnPlaceSig').disabled = false;
+    setMode('signature');
+}
+
+// ===== UNDO =====
+function doUndo() {
+    fetch('/undo', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ page: currentPage })
+    }).then(() => loadAnnotations());
+}
+
+// ===== PAGE NAVIGATION =====
+function goPage(delta) {
+    const p = currentPage + delta;
+    if (p >= 0 && p < pageCount) location.href = '/?page=' + p;
+}
+
+// ===== INIT =====
+pageImg.onload = () => {
+    loadAnnotations();
+};
+// Start with overlay disabled (no mode active)
+clickOverlay.style.pointerEvents = 'none';
+</script>
+</body>
+</html>
