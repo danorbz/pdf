@@ -17,7 +17,11 @@ from __future__ import annotations
 import base64
 import io
 import os
+import shutil
 import tempfile
+import threading
+import time
+import uuid
 from pathlib import Path
 
 from flask import (
@@ -31,12 +35,76 @@ from pdf_engine import PDFEngine
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Store uploads in a temp directory
-UPLOAD_FOLDER = os.path.join(tempfile.gettempdir(), "pdf_filler_uploads")
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+# ---------------------------------------------------------------------------
+# Per-session isolation: each anonymous user gets their own PDFEngine and
+# upload folder, keyed by a session ID stored in a browser cookie.
+# ---------------------------------------------------------------------------
 
-# Global engine instance (single-user app)
-engine = PDFEngine()
+UPLOAD_ROOT = os.path.join(tempfile.gettempdir(), "pdf_filler_uploads")
+os.makedirs(UPLOAD_ROOT, exist_ok=True)
+
+SESSION_TIMEOUT = 60 * 60  # 1 hour – stale sessions are cleaned up
+
+_sessions_lock = threading.Lock()
+_sessions: dict[str, dict] = {}  # sid → {"engine": PDFEngine, "folder": str, "last_active": float}
+
+
+def _get_session() -> dict:
+    """Return (or create) the per-user session dict."""
+    sid = session.get("sid")
+    with _sessions_lock:
+        if sid and sid in _sessions:
+            _sessions[sid]["last_active"] = time.time()
+            return _sessions[sid]
+
+        # New anonymous user – create a fresh session
+        sid = uuid.uuid4().hex
+        session["sid"] = sid
+        folder = os.path.join(UPLOAD_ROOT, sid)
+        os.makedirs(folder, exist_ok=True)
+        entry = {
+            "engine": PDFEngine(),
+            "folder": folder,
+            "last_active": time.time(),
+        }
+        _sessions[sid] = entry
+        return entry
+
+
+def _get_engine() -> PDFEngine:
+    """Shortcut – return the PDFEngine for the current request."""
+    return _get_session()["engine"]
+
+
+def _get_upload_folder() -> str:
+    """Shortcut – return the upload folder for the current request."""
+    return _get_session()["folder"]
+
+
+# ---------------------------------------------------------------------------
+# Background cleanup of stale sessions
+# ---------------------------------------------------------------------------
+
+def _cleanup_loop() -> None:
+    """Periodically remove sessions that haven't been active for a while."""
+    while True:
+        time.sleep(300)  # check every 5 minutes
+        now = time.time()
+        to_remove: list[str] = []
+        with _sessions_lock:
+            for sid, entry in _sessions.items():
+                if now - entry["last_active"] > SESSION_TIMEOUT:
+                    to_remove.append(sid)
+            for sid in to_remove:
+                entry = _sessions.pop(sid, None)
+                if entry:
+                    entry["engine"].close()
+                    folder = entry["folder"]
+                    if os.path.isdir(folder):
+                        shutil.rmtree(folder, ignore_errors=True)
+
+_cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True)
+_cleanup_thread.start()
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +114,7 @@ engine = PDFEngine()
 @app.route("/")
 def index():
     """Show upload form or editor depending on state."""
+    engine = _get_engine()
     page = int(request.args.get("page", 0))
     if engine.is_open:
         page = max(0, min(page, engine.page_count - 1))
@@ -67,7 +136,9 @@ def upload():
     if not f or not f.filename.lower().endswith(".pdf"):
         return redirect(url_for("index"))
 
-    filepath = os.path.join(UPLOAD_FOLDER, "current.pdf")
+    engine = _get_engine()
+    folder = _get_upload_folder()
+    filepath = os.path.join(folder, "current.pdf")
     f.save(filepath)
     engine.close()
     engine.open(filepath)
@@ -77,6 +148,7 @@ def upload():
 @app.route("/page/<int:page_num>/image")
 def page_image(page_num: int):
     """Return the rendered page as a clean PNG (no annotations baked in)."""
+    engine = _get_engine()
     if not engine.is_open:
         return "No PDF loaded", 404
 
@@ -93,6 +165,7 @@ def page_image(page_num: int):
 @app.route("/page/<int:page_num>/annotations")
 def page_annotations(page_num: int):
     """Return annotation data for the page as JSON."""
+    engine = _get_engine()
     if not engine.is_open:
         return jsonify({"texts": [], "signatures": []})
     return jsonify(engine.get_annotations_json(page_num))
@@ -101,6 +174,7 @@ def page_annotations(page_num: int):
 @app.route("/signature_image/<int:ann_id>")
 def signature_image(ann_id: int):
     """Return the signature PNG for a given annotation id."""
+    engine = _get_engine()
     if not engine.is_open:
         return "No PDF loaded", 404
     # Search all pages for the signature
@@ -122,6 +196,7 @@ def add_text():
     text = data.get("text", "")
     font_size = float(data.get("font_size", 12))
 
+    engine = _get_engine()
     if text and engine.is_open:
         engine.add_text(page, x, y, text, font_size=font_size)
     return jsonify({"ok": True})
@@ -141,6 +216,7 @@ def add_signature():
     height = float(data.get("height", 60))
     img_b64 = data.get("image", "")
 
+    engine = _get_engine()
     if img_b64 and engine.is_open:
         # Strip data URL prefix if present
         if "," in img_b64:
@@ -158,6 +234,7 @@ def move():
     ann_id = int(data.get("id", 0))
     x = float(data.get("x", 0))
     y = float(data.get("y", 0))
+    engine = _get_engine()
     ok = engine.move_annotation(page, ann_id, x, y) if engine.is_open else False
     return jsonify({"ok": ok})
 
@@ -168,6 +245,7 @@ def remove():
     data = request.get_json()
     page = int(data.get("page", 0))
     ann_id = int(data.get("id", 0))
+    engine = _get_engine()
     ok = engine.remove_annotation(page, ann_id) if engine.is_open else False
     return jsonify({"ok": ok})
 
@@ -177,6 +255,7 @@ def undo():
     """Remove the last annotation on the given page."""
     data = request.get_json()
     page = int(data.get("page", 0))
+    engine = _get_engine()
     removed = engine.remove_last_annotation(page) if engine.is_open else False
     return jsonify({"ok": removed})
 
@@ -184,10 +263,12 @@ def undo():
 @app.route("/save")
 def save():
     """Save the annotated PDF and send it for download."""
+    engine = _get_engine()
     if not engine.is_open:
         return "No PDF loaded", 404
 
-    output_path = os.path.join(UPLOAD_FOLDER, "filled_output.pdf")
+    folder = _get_upload_folder()
+    output_path = os.path.join(folder, "filled_output.pdf")
     engine.save(output_path)
     return send_file(output_path, as_attachment=True,
                      download_name="filled.pdf", mimetype="application/pdf")
@@ -196,6 +277,7 @@ def save():
 @app.route("/clear", methods=["POST"])
 def clear():
     """Close the current PDF and go back to upload."""
+    engine = _get_engine()
     engine.close()
     return redirect(url_for("index"))
 
