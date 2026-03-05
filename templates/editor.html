@@ -161,7 +161,7 @@
 
 <!-- ===== TOOLBAR ===== -->
 <div class="toolbar">
-    <button onclick="location.href='/save'" class="btn-success">💾 Save PDF</button>
+    <button onclick="doSave()" class="btn-success">💾 Save PDF</button>
     <div class="sep"></div>
     <button id="btnAddText" onclick="setMode('text')">✏️ Add Text</button>
     <button id="btnDrawSig" onclick="openSignaturePad()">🖊️ Draw Signature</button>
@@ -173,9 +173,7 @@
     <span class="page-info" id="pageInfo">Page {{ current_page + 1 }} / {{ page_count }}</span>
     <button onclick="goPage(1)">Next ▶</button>
     <div class="sep"></div>
-    <form action="/clear" method="POST" style="display:inline;">
-        <button type="submit" class="btn-danger">✕ Close PDF</button>
-    </form>
+    <button onclick="doClear()" class="btn-danger">✕ Close PDF</button>
 </div>
 
 <!-- ===== HINT BAR ===== -->
@@ -187,7 +185,7 @@
 <div class="canvas-container">
     <div class="page-wrapper" id="pageWrapper">
         <img id="pageImg"
-             src="/page/{{ current_page }}/image"
+             src=""
              alt="PDF Page"
              draggable="false">
         <!-- Annotations will be rendered as absolutely-positioned divs here -->
@@ -223,6 +221,7 @@
 
 <script>
 // ===== STATE =====
+const TID         = '{{ tid }}';   // server-generated tab session id
 const currentPage = {{ current_page }};
 const pageCount   = {{ page_count }};
 const PAGE_W_PT   = {{ page_width }};
@@ -237,6 +236,12 @@ const pageImg          = document.getElementById('pageImg');
 const pageWrapper      = document.getElementById('pageWrapper');
 const annotationLayer  = document.getElementById('annotationLayer');
 const clickOverlay     = document.getElementById('clickOverlay');
+
+// Helper: fetch with X-Tab-Id header always attached
+function tidFetch(url, opts = {}) {
+    opts.headers = Object.assign({'X-Tab-Id': TID}, opts.headers || {});
+    return fetch(url, opts);
+}
 
 // ===== COORDINATE HELPERS =====
 function imgScale() {
@@ -292,7 +297,7 @@ clickOverlay.addEventListener('click', (e) => {
 
 // ===== LOAD & RENDER ANNOTATIONS =====
 function loadAnnotations() {
-    fetch(`/page/${currentPage}/annotations`)
+    tidFetch(`/page/${currentPage}/annotations`)
         .then(r => r.json())
         .then(data => renderAnnotations(data));
 }
@@ -332,10 +337,12 @@ function renderAnnotations(data) {
         el.style.height = pdfPtToDisplayPx(s.height) + 'px';
 
         const img = document.createElement('img');
-        img.src = `/signature_image/${s.id}`;
         img.style.width = '100%';
         img.style.height = '100%';
         el.appendChild(img);
+        tidFetch(`/signature_image/${s.id}`)
+            .then(r => r.blob())
+            .then(blob => img.src = URL.createObjectURL(blob));
 
         const del = document.createElement('button');
         del.className = 'delete-btn';
@@ -393,10 +400,10 @@ function makeDraggable(el, annId, fontSizeOffset) {
             pdfY += fontSizeOffset;
         }
 
-        fetch('/move', {
+        tidFetch('/move', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ page: currentPage, id: annId, x: pdfX, y: pdfY })
+            body: JSON.stringify({ tid: TID, page: currentPage, id: annId, x: pdfX, y: pdfY })
         });
     }
 
@@ -405,10 +412,10 @@ function makeDraggable(el, annId, fontSizeOffset) {
 
 // ===== REMOVE ANNOTATION =====
 function removeAnnotation(annId) {
-    fetch('/remove', {
+    tidFetch('/remove', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ page: currentPage, id: annId })
+        body: JSON.stringify({ tid: TID, page: currentPage, id: annId })
     }).then(() => loadAnnotations());
 }
 
@@ -430,11 +437,11 @@ function confirmText() {
     const text = document.getElementById('textInput').value.trim();
     const size = parseInt(document.getElementById('textSize').value) || 12;
     if (!text || !pendingClick) { cancelText(); return; }
-    fetch('/add_text', {
+    tidFetch('/add_text', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-            page: currentPage, x: pendingClick.x, y: pendingClick.y,
+            tid: TID, page: currentPage, x: pendingClick.x, y: pendingClick.y,
             text: text, font_size: size,
         })
     }).then(() => { loadAnnotations(); cancelText(); setMode('none'); });
@@ -447,11 +454,11 @@ document.getElementById('textInput').addEventListener('keydown', (e) => {
 // ===== ADD SIGNATURE =====
 function addSignatureAt(pdfX, pdfY) {
     const w = 150, h = 60;
-    fetch('/add_signature', {
+    tidFetch('/add_signature', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
-            page: currentPage, x: pdfX, y: pdfY,
+            tid: TID, page: currentPage, x: pdfX, y: pdfY,
             width: w, height: h, image: signatureData,
         })
     }).then(() => { loadAnnotations(); setMode('none'); });
@@ -513,23 +520,74 @@ function confirmSignature() {
 
 // ===== UNDO =====
 function doUndo() {
-    fetch('/undo', {
+    tidFetch('/undo', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ page: currentPage })
+        body: JSON.stringify({ tid: TID, page: currentPage })
     }).then(() => loadAnnotations());
 }
 
 // ===== PAGE NAVIGATION =====
 function goPage(delta) {
     const p = currentPage + delta;
-    if (p >= 0 && p < pageCount) location.href = '/?page=' + p;
+    if (p >= 0 && p < pageCount) {
+        // Reload the whole editor with the new page
+        // We POST a hidden form so the server re-renders editor.html with the new page
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/go_page';
+        form.style.display = 'none';
+        const tidInput = document.createElement('input');
+        tidInput.name = 'tid'; tidInput.value = TID;
+        const pageInput = document.createElement('input');
+        pageInput.name = 'page'; pageInput.value = p;
+        form.appendChild(tidInput);
+        form.appendChild(pageInput);
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// ===== SAVE PDF =====
+function doSave() {
+    tidFetch('/save', {
+        method: 'POST',
+        headers: {'X-Tab-Id': TID},
+    }).then(r => {
+        if (!r.ok) { alert('Save failed – session may have expired.'); return; }
+        return r.blob();
+    }).then(blob => {
+        if (!blob) return;
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'filled.pdf';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    });
+}
+
+// ===== CLOSE / CLEAR =====
+function doClear() {
+    tidFetch('/clear', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ tid: TID }),
+    }).then(() => { window.location.href = '/'; });
 }
 
 // ===== INIT =====
+// Load page image via tidFetch so the X-Tab-Id header is sent
+function loadPageImage() {
+    tidFetch(`/page/${currentPage}/image`)
+        .then(r => r.blob())
+        .then(blob => {
+            pageImg.src = URL.createObjectURL(blob);
+        });
+}
 pageImg.onload = () => {
     loadAnnotations();
 };
+loadPageImage();
 // Start with overlay disabled (no mode active)
 clickOverlay.style.pointerEvents = 'none';
 </script>
