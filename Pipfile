@@ -4,11 +4,12 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-pillow = "*"
 pypdf = "*"
 reportlab = "*"
 pdf2image = "*"
+pillow = "*"
 flask = "*"
+python-bidi = "*"
 
 [dev-packages]
 

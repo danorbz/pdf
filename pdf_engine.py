@@ -9,13 +9,67 @@ from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import unicodedata
 
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.utils import ImageReader
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as rl_canvas
 from pdf2image import convert_from_path
+
+try:
+    from bidi.algorithm import get_display
+except ImportError:  # pragma: no cover - dependency fallback
+    get_display = None
+
+
+UNICODE_FONT_NAME = "PDFEngineUnicode"
+UNICODE_FONT_PATHS = (
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/Library/Fonts/Arial Unicode.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/local/share/fonts/DejaVuSans.ttf",
+)
+
+_unicode_font_registered = False
+_unicode_font_available = False
+
+
+def _register_unicode_font() -> bool:
+    """Register a TrueType font that supports Hebrew glyphs."""
+    global _unicode_font_registered, _unicode_font_available
+
+    if _unicode_font_registered:
+        return _unicode_font_available
+
+    _unicode_font_registered = True
+    for font_path in UNICODE_FONT_PATHS:
+        path = Path(font_path)
+        if path.exists():
+            try:
+                pdfmetrics.registerFont(TTFont(UNICODE_FONT_NAME, str(path)))
+            except Exception:
+                continue
+            _unicode_font_available = True
+            break
+
+    return _unicode_font_available
+
+
+def _contains_rtl(text: str) -> bool:
+    return any(unicodedata.bidirectional(char) in {"R", "AL", "AN"} for char in text)
+
+
+def _prepare_pdf_text(text: str) -> str:
+    if get_display and _contains_rtl(text):
+        return get_display(text)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +84,7 @@ class TextAnnotation:
     y: float  # position in PDF points (from top – will be flipped for save)
     text: str
     font_size: float = 12.0
-    font_name: str = "Helvetica"
+    font_name: str = UNICODE_FONT_NAME
     color: Tuple[float, float, float] = (0.0, 0.0, 0.0)  # RGB 0-1
 
 
@@ -219,10 +273,11 @@ class PDFEngine:
 
         # Texts – user coords are top-left; ReportLab is bottom-left
         for ta in pa.texts:
-            c.setFont(ta.font_name, ta.font_size)
+            font_name = ta.font_name if _register_unicode_font() else "Helvetica"
+            c.setFont(font_name, ta.font_size)
             c.setFillColorRGB(*ta.color)
             pdf_y = page_height - ta.y
-            c.drawString(ta.x, pdf_y, ta.text)
+            c.drawString(ta.x, pdf_y, _prepare_pdf_text(ta.text))
 
         # Signatures
         for sa in pa.signatures:

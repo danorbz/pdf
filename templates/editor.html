@@ -13,6 +13,99 @@
             height: 100vh;
             user-select: none;
         }
+        body.is-loading .app-shell {
+            opacity: 0;
+            pointer-events: none;
+            transform: translateY(8px);
+        }
+        .app-shell {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            width: 100%;
+            height: 100vh;
+            min-height: 100vh;
+            overflow: hidden;
+            opacity: 1;
+            transform: translateY(0);
+            transition: opacity 0.18s ease, transform 0.18s ease;
+        }
+
+        /* -- Loading screen -- */
+        .page-loader {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background:
+                radial-gradient(circle at 50% 34%, rgba(74,108,247,0.18), transparent 34%),
+                linear-gradient(180deg, #f6f7fb 0%, #dfe3ea 100%);
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.22s ease, visibility 0.22s ease;
+        }
+        body.is-loading .page-loader {
+            opacity: 1;
+            visibility: visible;
+        }
+        .loader-stage {
+            display: grid;
+            place-items: center;
+            gap: 22px;
+            color: #1a1a2e;
+        }
+        .loader-pages {
+            position: relative;
+            width: 104px;
+            height: 126px;
+            filter: drop-shadow(0 18px 24px rgba(26,26,46,0.22));
+        }
+        .loader-pages span {
+            position: absolute;
+            inset: 0;
+            border-radius: 10px;
+            background: #fff;
+            border: 1px solid rgba(26,26,46,0.12);
+            overflow: hidden;
+            transform-origin: center bottom;
+            animation: pageFlip 1.45s ease-in-out infinite;
+        }
+        .loader-pages span:nth-child(1) { transform: rotate(-8deg) translateX(-13px); animation-delay: -0.22s; }
+        .loader-pages span:nth-child(2) { transform: rotate(0deg); animation-delay: -0.1s; }
+        .loader-pages span:nth-child(3) { transform: rotate(8deg) translateX(13px); }
+        .loader-pages span::before {
+            content: '';
+            position: absolute;
+            left: 17px;
+            right: 17px;
+            top: 26px;
+            height: 7px;
+            border-radius: 99px;
+            background: #4a6cf7;
+            box-shadow: 0 22px 0 rgba(74,108,247,0.28), 0 44px 0 rgba(26,26,46,0.12);
+        }
+        .loader-pages span::after {
+            content: '';
+            position: absolute;
+            inset: -20% 0;
+            background: linear-gradient(100deg, transparent 35%, rgba(255,255,255,0.9), transparent 65%);
+            animation: scanSheet 1.45s ease-in-out infinite;
+        }
+        .loader-text {
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0;
+        }
+        @keyframes pageFlip {
+            0%, 100% { translate: 0 0; rotate: 0deg; }
+            50% { translate: 0 -10px; rotate: 5deg; }
+        }
+        @keyframes scanSheet {
+            0% { transform: translateX(-110%); }
+            100% { transform: translateX(110%); }
+        }
 
         /* -- Toolbar -- */
         .toolbar {
@@ -43,7 +136,8 @@
         /* -- Canvas area -- */
         .canvas-container {
             flex: 1; overflow: auto; display: flex;
-            justify-content: center; padding: 24px; background: #ccc;
+            justify-content: center; align-items: flex-start;
+            padding: 24px; background: #ccc;
         }
         .page-wrapper {
             position: relative;
@@ -59,6 +153,10 @@
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             z-index: 5; cursor: crosshair;
         }
+        #annotationLayer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+        }
 
         /* -- Draggable annotation items -- */
         .annotation {
@@ -67,6 +165,7 @@
             cursor: grab;
             border: 2px dashed transparent;
             transition: border-color 0.15s, box-shadow 0.15s;
+            pointer-events: auto;
         }
         .annotation:hover {
             border-color: #4a6cf7;
@@ -157,7 +256,16 @@
         }
     </style>
 </head>
-<body>
+<body class="is-loading">
+
+<div class="page-loader" id="pageLoader" aria-live="polite" aria-busy="true">
+    <div class="loader-stage">
+        <div class="loader-pages" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="loader-text" id="loaderText">Rendering page...</div>
+    </div>
+</div>
+
+<main class="app-shell" id="appShell">
 
 <!-- ===== TOOLBAR ===== -->
 <div class="toolbar">
@@ -194,6 +302,8 @@
         <div id="clickOverlay"></div>
     </div>
 </div>
+
+</main>
 
 <!-- ===== TEXT INPUT POPOVER ===== -->
 <div class="text-popover" id="textPopover">
@@ -236,6 +346,16 @@ const pageImg          = document.getElementById('pageImg');
 const pageWrapper      = document.getElementById('pageWrapper');
 const annotationLayer  = document.getElementById('annotationLayer');
 const clickOverlay     = document.getElementById('clickOverlay');
+const loaderText       = document.getElementById('loaderText');
+
+function showLoader(message = 'Rendering page...') {
+    loaderText.textContent = message;
+    document.body.classList.add('is-loading');
+}
+
+function hideLoader() {
+    document.body.classList.remove('is-loading');
+}
 
 // Helper: fetch with X-Tab-Id header always attached
 function tidFetch(url, opts = {}) {
@@ -297,13 +417,14 @@ clickOverlay.addEventListener('click', (e) => {
 
 // ===== LOAD & RENDER ANNOTATIONS =====
 function loadAnnotations() {
-    tidFetch(`/page/${currentPage}/annotations`)
+    return tidFetch(`/page/${currentPage}/annotations`)
         .then(r => r.json())
         .then(data => renderAnnotations(data));
 }
 
 function renderAnnotations(data) {
     annotationLayer.innerHTML = '';
+    const signatureLoads = [];
 
     data.texts.forEach(t => {
         const el = document.createElement('div');
@@ -340,9 +461,14 @@ function renderAnnotations(data) {
         img.style.width = '100%';
         img.style.height = '100%';
         el.appendChild(img);
-        tidFetch(`/signature_image/${s.id}`)
+        const signatureLoad = tidFetch(`/signature_image/${s.id}`)
             .then(r => r.blob())
-            .then(blob => img.src = URL.createObjectURL(blob));
+            .then(blob => new Promise(resolve => {
+                img.onload = () => resolve();
+                img.onerror = () => resolve();
+                img.src = URL.createObjectURL(blob);
+            }));
+        signatureLoads.push(signatureLoad);
 
         const del = document.createElement('button');
         del.className = 'delete-btn';
@@ -353,6 +479,8 @@ function renderAnnotations(data) {
         makeDraggable(el, s.id, 0);
         annotationLayer.appendChild(el);
     });
+
+    return Promise.all(signatureLoads);
 }
 
 // ===== DRAG & DROP =====
@@ -412,19 +540,26 @@ function makeDraggable(el, annId, fontSizeOffset) {
 
 // ===== REMOVE ANNOTATION =====
 function removeAnnotation(annId) {
+    showLoader('Updating page...');
     tidFetch('/remove', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ tid: TID, page: currentPage, id: annId })
-    }).then(() => loadAnnotations());
+    }).then(() => loadAnnotations()).finally(hideLoader);
 }
 
 // ===== ADD TEXT =====
 function showTextPopover(cx, cy) {
     const pop = document.getElementById('textPopover');
-    pop.style.left = cx + 'px';
-    pop.style.top  = cy + 'px';
     pop.classList.add('show');
+
+    const margin = 12;
+    const rect = pop.getBoundingClientRect();
+    const left = Math.min(cx, window.innerWidth - rect.width - margin);
+    const top = Math.min(cy, window.innerHeight - rect.height - margin);
+    pop.style.left = Math.max(margin, left) + 'px';
+    pop.style.top  = Math.max(margin, top) + 'px';
+
     const inp = document.getElementById('textInput');
     inp.value = '';
     inp.focus();
@@ -437,6 +572,7 @@ function confirmText() {
     const text = document.getElementById('textInput').value.trim();
     const size = parseInt(document.getElementById('textSize').value) || 12;
     if (!text || !pendingClick) { cancelText(); return; }
+    showLoader('Adding text...');
     tidFetch('/add_text', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -444,7 +580,9 @@ function confirmText() {
             tid: TID, page: currentPage, x: pendingClick.x, y: pendingClick.y,
             text: text, font_size: size,
         })
-    }).then(() => { loadAnnotations(); cancelText(); setMode('none'); });
+    }).then(() => loadAnnotations())
+      .then(() => { cancelText(); setMode('none'); })
+      .finally(hideLoader);
 }
 document.getElementById('textInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') confirmText();
@@ -454,6 +592,7 @@ document.getElementById('textInput').addEventListener('keydown', (e) => {
 // ===== ADD SIGNATURE =====
 function addSignatureAt(pdfX, pdfY) {
     const w = 150, h = 60;
+    showLoader('Placing signature...');
     tidFetch('/add_signature', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -461,7 +600,9 @@ function addSignatureAt(pdfX, pdfY) {
             tid: TID, page: currentPage, x: pdfX, y: pdfY,
             width: w, height: h, image: signatureData,
         })
-    }).then(() => { loadAnnotations(); setMode('none'); });
+    }).then(() => loadAnnotations())
+      .then(() => setMode('none'))
+      .finally(hideLoader);
 }
 
 // ===== SIGNATURE PAD =====
@@ -520,17 +661,19 @@ function confirmSignature() {
 
 // ===== UNDO =====
 function doUndo() {
+    showLoader('Updating page...');
     tidFetch('/undo', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ tid: TID, page: currentPage })
-    }).then(() => loadAnnotations());
+    }).then(() => loadAnnotations()).finally(hideLoader);
 }
 
 // ===== PAGE NAVIGATION =====
 function goPage(delta) {
     const p = currentPage + delta;
     if (p >= 0 && p < pageCount) {
+        showLoader(`Rendering page ${p + 1}...`);
         // Reload the whole editor with the new page
         // We POST a hidden form so the server re-renders editor.html with the new page
         const form = document.createElement('form');
@@ -550,6 +693,7 @@ function goPage(delta) {
 
 // ===== SAVE PDF =====
 function doSave() {
+    showLoader('Building your PDF...');
     tidFetch('/save', {
         method: 'POST',
         headers: {'X-Tab-Id': TID},
@@ -563,11 +707,12 @@ function doSave() {
         a.download = 'filled.pdf';
         a.click();
         URL.revokeObjectURL(a.href);
-    });
+    }).finally(hideLoader);
 }
 
 // ===== CLOSE / CLEAR =====
 function doClear() {
+    showLoader('Closing PDF...');
     tidFetch('/clear', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -578,15 +723,20 @@ function doClear() {
 // ===== INIT =====
 // Load page image via tidFetch so the X-Tab-Id header is sent
 function loadPageImage() {
-    tidFetch(`/page/${currentPage}/image`)
+    showLoader(`Rendering page ${currentPage + 1}...`);
+    return tidFetch(`/page/${currentPage}/image`)
         .then(r => r.blob())
-        .then(blob => {
+        .then(blob => new Promise((resolve, reject) => {
+            pageImg.onload = () => resolve();
+            pageImg.onerror = () => reject(new Error('Page image failed to load'));
             pageImg.src = URL.createObjectURL(blob);
-        });
+        }))
+        .then(() => loadAnnotations())
+        .catch(() => {
+            alert('Could not render this page. Please try again.');
+        })
+        .finally(hideLoader);
 }
-pageImg.onload = () => {
-    loadAnnotations();
-};
 loadPageImage();
 // Start with overlay disabled (no mode active)
 clickOverlay.style.pointerEvents = 'none';
