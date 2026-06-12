@@ -192,7 +192,8 @@
 
         .ann-text {
             padding: 2px 4px;
-            white-space: nowrap;
+            white-space: pre-wrap;
+            line-height: 1.25;
             color: #000;
             pointer-events: auto;
         }
@@ -237,6 +238,13 @@
             width: 240px; padding: 8px; border: 1px solid #ccc;
             border-radius: 6px; margin-bottom: 8px; display: block; font-size: 14px;
         }
+        .text-popover textarea {
+            width: 320px; min-height: 120px; padding: 8px; border: 1px solid #ccc;
+            border-radius: 6px; margin-bottom: 8px; display: none; font-size: 14px;
+            font-family: inherit; line-height: 1.35; resize: vertical;
+        }
+        .text-popover.multiline input[type="text"] { display: none; }
+        .text-popover.multiline textarea { display: block; }
         .text-popover input[type="number"] {
             width: 80px; padding: 8px; border: 1px solid #ccc;
             border-radius: 6px; margin-bottom: 12px; display: inline-block; font-size: 14px;
@@ -272,6 +280,7 @@
     <button onclick="doSave()" class="btn-success">💾 Save PDF</button>
     <div class="sep"></div>
     <button id="btnAddText" onclick="setMode('text')">✏️ Add Text</button>
+    <button id="btnAddMultiText" onclick="setMode('multilineText')">☰ Add Multiline Text</button>
     <button id="btnDrawSig" onclick="openSignaturePad()">🖊️ Draw Signature</button>
     <button id="btnPlaceSig" onclick="setMode('signature')" disabled>📌 Place Signature</button>
     <div class="sep"></div>
@@ -308,6 +317,7 @@
 <!-- ===== TEXT INPUT POPOVER ===== -->
 <div class="text-popover" id="textPopover">
     <input type="text" id="textInput" placeholder="Enter text…">
+    <textarea id="multiTextInput" placeholder="Enter multiline text…"></textarea>
     <label>Size: </label>
     <input type="number" id="textSize" value="12" min="6" max="72">
     <div class="btn-row">
@@ -338,7 +348,7 @@ const PAGE_W_PT   = {{ page_width }};
 const PAGE_H_PT   = {{ page_height }};
 const ZOOM        = 2.0;
 
-let mode = 'none';          // 'none' | 'text' | 'signature'
+let mode = 'none';          // 'none' | 'text' | 'multilineText' | 'signature'
 let signatureData = null;    // base64 PNG from pad
 let pendingClick = null;     // {x, y} in PDF points
 
@@ -381,6 +391,7 @@ function pdfPtToDisplayPx(pt) {
 function setMode(m) {
     mode = (mode === m) ? 'none' : m;
     document.getElementById('btnAddText').classList.toggle('active', mode === 'text');
+    document.getElementById('btnAddMultiText').classList.toggle('active', mode === 'multilineText');
     document.getElementById('btnPlaceSig').classList.toggle('active', mode === 'signature');
     clickOverlay.style.pointerEvents = (mode !== 'none') ? 'auto' : 'none';
     clickOverlay.style.cursor = (mode !== 'none') ? 'crosshair' : 'default';
@@ -391,6 +402,8 @@ function updateHint() {
     const bar = document.getElementById('hintBar');
     if (mode === 'text') {
         bar.innerHTML = '✏️ <b>Add Text mode</b> – Click on the PDF where you want the text.';
+    } else if (mode === 'multilineText') {
+        bar.innerHTML = '☰ <b>Add Multiline Text mode</b> – Click the PDF, then use Enter for new lines and Ctrl/⌘+Enter to add.';
     } else if (mode === 'signature') {
         bar.innerHTML = '📌 <b>Place Signature mode</b> – Click on the PDF to drop your signature.';
     } else {
@@ -407,7 +420,7 @@ clickOverlay.addEventListener('click', (e) => {
     const pdfX = pxToPdfPt(imgX);
     const pdfY = pxToPdfPt(imgY);
 
-    if (mode === 'text') {
+    if (mode === 'text' || mode === 'multilineText') {
         pendingClick = { x: pdfX, y: pdfY };
         showTextPopover(e.clientX, e.clientY);
     } else if (mode === 'signature' && signatureData) {
@@ -540,17 +553,21 @@ function makeDraggable(el, annId, fontSizeOffset) {
 
 // ===== REMOVE ANNOTATION =====
 function removeAnnotation(annId) {
-    showLoader('Updating page...');
     tidFetch('/remove', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ tid: TID, page: currentPage, id: annId })
-    }).then(() => loadAnnotations()).finally(hideLoader);
+    }).then(() => loadAnnotations());
 }
 
 // ===== ADD TEXT =====
 function showTextPopover(cx, cy) {
     const pop = document.getElementById('textPopover');
+    const isMultiline = mode === 'multilineText';
+    const singleInput = document.getElementById('textInput');
+    const multiInput = document.getElementById('multiTextInput');
+
+    pop.classList.toggle('multiline', isMultiline);
     pop.classList.add('show');
 
     const margin = 12;
@@ -560,19 +577,22 @@ function showTextPopover(cx, cy) {
     pop.style.left = Math.max(margin, left) + 'px';
     pop.style.top  = Math.max(margin, top) + 'px';
 
-    const inp = document.getElementById('textInput');
-    inp.value = '';
-    inp.focus();
+    singleInput.value = '';
+    multiInput.value = '';
+    (isMultiline ? multiInput : singleInput).focus();
 }
 function cancelText() {
     document.getElementById('textPopover').classList.remove('show');
     pendingClick = null;
 }
 function confirmText() {
-    const text = document.getElementById('textInput').value.trim();
+    const isMultiline = mode === 'multilineText';
+    const textInput = isMultiline
+        ? document.getElementById('multiTextInput')
+        : document.getElementById('textInput');
+    const text = textInput.value.trim();
     const size = parseInt(document.getElementById('textSize').value) || 12;
     if (!text || !pendingClick) { cancelText(); return; }
-    showLoader('Adding text...');
     tidFetch('/add_text', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -581,18 +601,23 @@ function confirmText() {
             text: text, font_size: size,
         })
     }).then(() => loadAnnotations())
-      .then(() => { cancelText(); setMode('none'); })
-      .finally(hideLoader);
+        .then(() => { cancelText(); setMode('none'); });
 }
 document.getElementById('textInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') confirmText();
+    if (e.key === 'Escape') cancelText();
+});
+document.getElementById('multiTextInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        confirmText();
+    }
     if (e.key === 'Escape') cancelText();
 });
 
 // ===== ADD SIGNATURE =====
 function addSignatureAt(pdfX, pdfY) {
     const w = 150, h = 60;
-    showLoader('Placing signature...');
     tidFetch('/add_signature', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -601,8 +626,7 @@ function addSignatureAt(pdfX, pdfY) {
             width: w, height: h, image: signatureData,
         })
     }).then(() => loadAnnotations())
-      .then(() => setMode('none'))
-      .finally(hideLoader);
+        .then(() => setMode('none'));
 }
 
 // ===== SIGNATURE PAD =====
@@ -661,12 +685,11 @@ function confirmSignature() {
 
 // ===== UNDO =====
 function doUndo() {
-    showLoader('Updating page...');
     tidFetch('/undo', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ tid: TID, page: currentPage })
-    }).then(() => loadAnnotations()).finally(hideLoader);
+    }).then(() => loadAnnotations());
 }
 
 // ===== PAGE NAVIGATION =====
@@ -693,7 +716,6 @@ function goPage(delta) {
 
 // ===== SAVE PDF =====
 function doSave() {
-    showLoader('Building your PDF...');
     tidFetch('/save', {
         method: 'POST',
         headers: {'X-Tab-Id': TID},
@@ -707,12 +729,11 @@ function doSave() {
         a.download = 'filled.pdf';
         a.click();
         URL.revokeObjectURL(a.href);
-    }).finally(hideLoader);
+    });
 }
 
 // ===== CLOSE / CLEAR =====
 function doClear() {
-    showLoader('Closing PDF...');
     tidFetch('/clear', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},

@@ -276,8 +276,10 @@ class PDFEngine:
             font_name = ta.font_name if _register_unicode_font() else "Helvetica"
             c.setFont(font_name, ta.font_size)
             c.setFillColorRGB(*ta.color)
-            pdf_y = page_height - ta.y
-            c.drawString(ta.x, pdf_y, _prepare_pdf_text(ta.text))
+            line_height = ta.font_size * 1.25
+            for index, line in enumerate(ta.text.splitlines() or [""]):
+                pdf_y = page_height - ta.y - (index * line_height)
+                c.drawString(ta.x, pdf_y, _prepare_pdf_text(line))
 
         # Signatures
         for sa in pa.signatures:
