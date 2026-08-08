@@ -33,17 +33,47 @@ UNICODE_FONT_PATHS = (
     "C:/Windows/Fonts/arialuni.ttf",
     "C:/Windows/Fonts/ARIAL.TTF",
     "C:/Windows/Fonts/Arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSansHebrew-Regular.ttf",
     "/usr/local/share/fonts/DejaVuSans.ttf",
+)
+
+LINUX_FONT_DIRS = (
+    "/usr/share/fonts/truetype",
+    "/usr/share/fonts/opentype",
+    "/usr/local/share/fonts",
 )
 
 _unicode_font_registered = False
 _unicode_font_available = False
 _unicode_font_path: Optional[str] = None
+
+
+def _iter_unicode_font_paths():
+    seen = set()
+    for font_path in UNICODE_FONT_PATHS:
+        if font_path not in seen:
+            seen.add(font_path)
+            yield Path(font_path)
+
+    for font_dir in LINUX_FONT_DIRS:
+        root = Path(font_dir)
+        if not root.exists():
+            continue
+        for pattern in ("*DejaVuSans*.ttf", "*LiberationSans*.ttf", "*NotoSansHebrew*.ttf", "*NotoSans*.ttf"):
+            for path in root.rglob(pattern):
+                font_path = str(path)
+                if font_path not in seen:
+                    seen.add(font_path)
+                    yield path
 
 
 def _register_unicode_font() -> bool:
@@ -54,8 +84,7 @@ def _register_unicode_font() -> bool:
         return _unicode_font_available
 
     _unicode_font_registered = True
-    for font_path in UNICODE_FONT_PATHS:
-        path = Path(font_path)
+    for path in _iter_unicode_font_paths():
         if path.exists():
             try:
                 pdfmetrics.registerFont(TTFont(UNICODE_FONT_NAME, str(path)))
@@ -72,9 +101,41 @@ def _contains_rtl(text: str) -> bool:
     return any(unicodedata.bidirectional(char) in {"R", "AL", "AN"} for char in text)
 
 
+def _basic_rtl_display(text: str) -> str:
+    tokens: list[tuple[str, str]] = []
+    current_kind = ""
+    current_text = ""
+
+    for char in text:
+        bidi = unicodedata.bidirectional(char)
+        if bidi in {"R", "AL", "AN"}:
+            kind = "rtl"
+        elif bidi in {"WS", "B", "S"}:
+            kind = "space"
+        else:
+            kind = "ltr"
+
+        if current_text and kind != current_kind:
+            tokens.append((current_kind, current_text))
+            current_text = ""
+
+        current_kind = kind
+        current_text += char
+
+    if current_text:
+        tokens.append((current_kind, current_text))
+
+    display_tokens = []
+    for kind, token in reversed(tokens):
+        display_tokens.append(token[::-1] if kind == "rtl" else token)
+    return "".join(display_tokens)
+
+
 def _prepare_pdf_text(text: str) -> str:
     if get_display and _contains_rtl(text):
         return get_display(text)
+    if _contains_rtl(text):
+        return _basic_rtl_display(text)
     return text
 
 
@@ -314,7 +375,9 @@ class PDFEngine:
             line_height = ta.font_size * 1.25
             for index, line in enumerate(ta.text.splitlines() or [""]):
                 pdf_y = page_height - ta.y - (index * line_height)
-                if _contains_rtl(line) and _unicode_font_path:
+                if _contains_rtl(line):
+                    if not _unicode_font_path:
+                        raise RuntimeError("Cannot save Hebrew text: no Hebrew-capable TrueType font was found.")
                     text_image, width, height, baseline = _render_text_line_image(
                         line,
                         _unicode_font_path,
