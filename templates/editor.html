@@ -132,6 +132,21 @@
         .toolbar .btn-success { background: #27ae60; }
         .toolbar .btn-success:hover { background: #2ecc71; }
         .toolbar .page-info { color: #aaa; font-size: 14px; margin: 0 8px; }
+        .toolbar-spacer { flex: 1 1 auto; }
+        .version-wrap { position: relative; display: flex; align-items: center; }
+        .toolbar .version-logo {
+            width: 36px; height: 36px; padding: 0; border-radius: 50%;
+            display: grid; place-items: center; font-weight: 800;
+            background: #fff; color: #1a1a2e;
+        }
+        .toolbar .version-logo:hover { background: #f1f4ff; color: #4a6cf7; }
+        .version-popover {
+            position: absolute; right: 0; top: calc(100% + 8px);
+            display: none; padding: 7px 11px; border-radius: 8px;
+            background: #fff; color: #1a1a2e; font-size: 13px; font-weight: 700;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.22); white-space: nowrap;
+        }
+        .version-popover.show { display: block; }
 
         /* -- Canvas area -- */
         .canvas-container {
@@ -291,6 +306,11 @@
     <button onclick="goPage(1)">Next ▶</button>
     <div class="sep"></div>
     <button onclick="doClear()" class="btn-danger">✕ Close PDF</button>
+    <div class="toolbar-spacer"></div>
+    <div class="version-wrap">
+        <button type="button" class="version-logo" id="versionLogo" aria-label="Show app version" aria-expanded="false">DV</button>
+        <span class="version-popover" id="versionPopover" role="status">Version v2</span>
+    </div>
 </div>
 
 <!-- ===== HINT BAR ===== -->
@@ -357,6 +377,20 @@ const pageWrapper      = document.getElementById('pageWrapper');
 const annotationLayer  = document.getElementById('annotationLayer');
 const clickOverlay     = document.getElementById('clickOverlay');
 const loaderText       = document.getElementById('loaderText');
+const versionLogo      = document.getElementById('versionLogo');
+const versionPopover   = document.getElementById('versionPopover');
+
+versionLogo.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const isVisible = versionPopover.classList.toggle('show');
+    versionLogo.setAttribute('aria-expanded', String(isVisible));
+});
+
+document.addEventListener('click', () => {
+    if (!versionPopover.classList.contains('show')) return;
+    versionPopover.classList.remove('show');
+    versionLogo.setAttribute('aria-expanded', 'false');
+});
 
 function showLoader(message = 'Rendering page...') {
     loaderText.textContent = message;
