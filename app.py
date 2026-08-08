@@ -133,9 +133,12 @@ def index():
     return render_template("upload.html")
 
 
-@app.route("/upload", methods=["POST"])
+@app.route("/upload", methods=["GET", "POST"])
 def upload():
     """Handle PDF upload: create a new tab session and render the editor."""
+    if request.method == "GET":
+        return redirect(url_for("index"))
+
     f = request.files.get("pdf")
     if not f or not f.filename.lower().endswith(".pdf"):
         return redirect(url_for("index"))
