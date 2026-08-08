@@ -29,6 +29,10 @@ except ImportError:  # pragma: no cover - dependency fallback
 
 UNICODE_FONT_NAME = "PDFEngineUnicode"
 UNICODE_FONT_PATHS = (
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/arialuni.ttf",
+    "C:/Windows/Fonts/ARIAL.TTF",
+    "C:/Windows/Fonts/Arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
     "/Library/Fonts/Arial Unicode.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",

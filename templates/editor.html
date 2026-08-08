@@ -208,6 +208,8 @@
         .ann-text {
             padding: 2px 4px;
             white-space: pre-wrap;
+            unicode-bidi: plaintext;
+            text-align: start;
             line-height: 1.25;
             color: #000;
             pointer-events: auto;
@@ -252,11 +254,15 @@
         .text-popover input[type="text"] {
             width: 240px; padding: 8px; border: 1px solid #ccc;
             border-radius: 6px; margin-bottom: 8px; display: block; font-size: 14px;
+            unicode-bidi: plaintext;
+            text-align: start;
         }
         .text-popover textarea {
             width: 320px; min-height: 120px; padding: 8px; border: 1px solid #ccc;
             border-radius: 6px; margin-bottom: 8px; display: none; font-size: 14px;
             font-family: inherit; line-height: 1.35; resize: vertical;
+            unicode-bidi: plaintext;
+            text-align: start;
         }
         .text-popover.multiline input[type="text"] { display: none; }
         .text-popover.multiline textarea { display: block; }
@@ -309,7 +315,7 @@
     <div class="toolbar-spacer"></div>
     <div class="version-wrap">
         <button type="button" class="version-logo" id="versionLogo" aria-label="Show app version" aria-expanded="false">DV</button>
-        <span class="version-popover" id="versionPopover" role="status">Version v2</span>
+        <span class="version-popover" id="versionPopover" role="status">Version v2.1</span>
     </div>
 </div>
 
@@ -336,8 +342,8 @@
 
 <!-- ===== TEXT INPUT POPOVER ===== -->
 <div class="text-popover" id="textPopover">
-    <input type="text" id="textInput" placeholder="Enter text…">
-    <textarea id="multiTextInput" placeholder="Enter multiline text…"></textarea>
+    <input type="text" id="textInput" placeholder="Enter text…" dir="auto">
+    <textarea id="multiTextInput" placeholder="Enter multiline text…" dir="auto"></textarea>
     <label>Size: </label>
     <input type="number" id="textSize" value="12" min="6" max="72">
     <div class="btn-row">
@@ -482,6 +488,7 @@ function renderAnnotations(data) {
         el.style.top  = pdfPtToDisplayPx(t.y - t.font_size) + 'px';
         el.style.fontSize = pdfPtToDisplayPx(t.font_size) + 'px';
         el.style.fontFamily = 'Helvetica, Arial, sans-serif';
+        el.dir = 'auto';
         el.textContent = t.text;
 
         const del = document.createElement('button');
