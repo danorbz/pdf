@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import unicodedata
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
@@ -43,11 +43,12 @@ UNICODE_FONT_PATHS = (
 
 _unicode_font_registered = False
 _unicode_font_available = False
+_unicode_font_path: Optional[str] = None
 
 
 def _register_unicode_font() -> bool:
     """Register a TrueType font that supports Hebrew glyphs."""
-    global _unicode_font_registered, _unicode_font_available
+    global _unicode_font_registered, _unicode_font_available, _unicode_font_path
 
     if _unicode_font_registered:
         return _unicode_font_available
@@ -61,6 +62,7 @@ def _register_unicode_font() -> bool:
             except Exception:
                 continue
             _unicode_font_available = True
+            _unicode_font_path = str(path)
             break
 
     return _unicode_font_available
@@ -74,6 +76,35 @@ def _prepare_pdf_text(text: str) -> str:
     if get_display and _contains_rtl(text):
         return get_display(text)
     return text
+
+
+def _render_text_line_image(
+    text: str,
+    font_path: str,
+    font_size: float,
+    color: Tuple[float, float, float],
+) -> tuple[Image.Image, float, float, float]:
+    scale = 3
+    padding = 2 * scale
+    font = ImageFont.truetype(font_path, max(1, round(font_size * scale)))
+    display_text = _prepare_pdf_text(text) or " "
+    ascent, descent = font.getmetrics()
+    baseline = padding + ascent
+
+    probe = Image.new("RGBA", (1, 1), (255, 255, 255, 0))
+    probe_draw = ImageDraw.Draw(probe)
+    advances = [max(0, probe_draw.textlength(char, font=font)) for char in display_text]
+    width = max(1, round(sum(advances)) + (2 * padding))
+    height = max(1, ascent + descent + (2 * padding))
+
+    image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(image)
+    fill = tuple(max(0, min(255, round(channel * 255))) for channel in color) + (255,)
+    cursor_x = padding
+    for char, advance in zip(display_text, advances):
+        draw.text((cursor_x, baseline), char, font=font, fill=fill, anchor="ls")
+        cursor_x += advance
+    return image, width / scale, height / scale, baseline / scale
 
 
 # ---------------------------------------------------------------------------
@@ -283,7 +314,23 @@ class PDFEngine:
             line_height = ta.font_size * 1.25
             for index, line in enumerate(ta.text.splitlines() or [""]):
                 pdf_y = page_height - ta.y - (index * line_height)
-                c.drawString(ta.x, pdf_y, _prepare_pdf_text(line))
+                if _contains_rtl(line) and _unicode_font_path:
+                    text_image, width, height, baseline = _render_text_line_image(
+                        line,
+                        _unicode_font_path,
+                        ta.font_size,
+                        ta.color,
+                    )
+                    c.drawImage(
+                        ImageReader(text_image),
+                        ta.x,
+                        pdf_y - (height - baseline),
+                        width=width,
+                        height=height,
+                        mask='auto',
+                    )
+                else:
+                    c.drawString(ta.x, pdf_y, line)
 
         # Signatures
         for sa in pa.signatures:
